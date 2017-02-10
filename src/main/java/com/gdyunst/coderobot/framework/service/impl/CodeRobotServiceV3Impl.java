@@ -1,0 +1,717 @@
+package com.gdyunst.coderobot.framework.service.impl;
+
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+
+import javax.swing.filechooser.FileSystemView;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.gdyunst.coderobot.common.DateUtil;
+import com.gdyunst.coderobot.common.DictionaryUtil;
+import com.gdyunst.coderobot.config.RobotConfig;
+import com.gdyunst.coderobot.framework.service.ICodeRobotServiceV3;
+
+
+@Service
+public class CodeRobotServiceV3Impl implements ICodeRobotServiceV3{
+
+	@Autowired
+	RobotConfig rbConfig;
+	
+	final String root="D:/workspace/";
+	
+	
+	private Connection getConnection() {
+		Connection conn = null;
+		try {
+			Class.forName("com.mysql.jdbc.Driver");
+			String pwd = rbConfig.getDbpassword();
+			String user = rbConfig.getDbusername();
+			
+			String url = rbConfig.getDburl();
+			Properties props = new Properties();
+			props.setProperty("user", user);
+			props.setProperty("password", pwd);
+			props.setProperty("remarks", "true"); // 设置可以获取remarks信息
+			props.setProperty("useInformationSchema", "true");// 设置可以获取tables
+																// remarks信息
+			conn = DriverManager.getConnection(url, props);
+		} catch (ClassNotFoundException e) {
+			e.printStackTrace();
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+		return conn;
+	}
+
+	private Map<String, Object> readDB(String tName) {
+		Map<String, Object> map = new HashMap<String, Object>();
+		FileSystemView fsv = FileSystemView.getFileSystemView();
+		// String path=fsv.getHomeDirectory().toString();//获取当前用户桌面路径
+		Connection getConnection = null;
+		DatabaseMetaData dbmd = null;
+		ResultSet resultSet = null;
+		try {
+			getConnection = getConnection();
+			dbmd = getConnection.getMetaData();
+			resultSet = dbmd.getTables(null, "%", tName, new String[] { "TABLE" });
+			while (resultSet.next()) {
+				String tableName = resultSet.getString("TABLE_NAME");
+				String tableComm = resultSet.getString("REMARKS");
+				// System.out.println("表名："+tableName+"\t\n表字段信息：");
+				ResultSet rs = dbmd.getColumns(null, "%", tableName, "%");
+				String baseCrudPackage = "";
+				String baseCrud = "";
+				String columnId = "";
+				String demoMapperTpl1 = "";
+				List<String> plist = new LinkedList<String>();
+				Map<String, String> pmap = new LinkedHashMap<String, String>();
+				Map<String, String> cmap = new LinkedHashMap<String, String>();
+				boolean b=false;
+				while (rs.next()) {
+					// System.out.println("字段名："+rs.getString("COLUMN_NAME")+"\t字段注释："+rs.getString("REMARKS")+"\t字段数据类型："+rs.getString("TYPE_NAME"));
+					String type = "";
+					if ("INT".equals(rs.getString("TYPE_NAME")) || "INTEGER".equals(rs.getString("TYPE_NAME"))) {
+						type = "Integer";
+					} else if ("TIMESTAMP".equals(rs.getString("TYPE_NAME"))
+							|| "DATETIME".equals(rs.getString("TYPE_NAME"))
+							|| "DATE".equals(rs.getString("TYPE_NAME"))) {
+						type = "Date";
+						plist.add("@JsonFormat(timezone = \"GMT+8\", pattern = \"yyyy-MM-dd HH:mm:ss\")");
+						
+					} else if ("FLOAT".equals(rs.getString("TYPE_NAME"))
+							|| "DOUBLE".equals(rs.getString("TYPE_NAME"))) {
+						type = "Double";
+					}else if ("BIT".equals(rs.getString("TYPE_NAME"))) {
+						type = "Boolean";
+					} else {
+						type = "String";
+					}
+//					allColumList.add(rs.getString("COLUMN_NAME"));
+					pmap.put(rs.getString("COLUMN_NAME"), type);
+					cmap.put(rs.getString("COLUMN_NAME"), type + "," + rs.getString("REMARKS"));
+					
+					if("parentId".equals(rs.getString("COLUMN_NAME"))){
+						b=true;
+					}
+					
+					if ("id".equals(rs.getString("COLUMN_NAME"))) {
+						plist.add("@Id");
+						columnId = rs.getString("COLUMN_NAME");
+					} else {
+						plist.add("@Column(name=\"" + rs.getString("COLUMN_NAME") + "\")");
+					}
+					String propertyStr = "private " + type + " " + rs.getString("COLUMN_NAME") + ";\t//"
+							+ rs.getString("REMARKS");
+					plist.add(propertyStr);
+				}
+				if(b){
+					baseCrudPackage= "com.yunst.ystframework.repository.base.tree";
+					demoMapperTpl1 = "/src/main/resources/public/template/entity/xmlMapperV2.tpl";
+					baseCrud="TreeCrud";
+					
+				} else {
+					baseCrudPackage= "com.yunst.ystframework.repository.base.crud";
+					demoMapperTpl1 = "/src/main/resources/public/template/entity/xmlMapperV3.tpl";
+					baseCrud="BaseCrud";
+				}
+				map.put(DictionaryUtil.PLIST, plist);
+				map.put(DictionaryUtil.TABLENAME, tName);
+				map.put(DictionaryUtil.BASECRUD, baseCrud);
+				map.put(DictionaryUtil.BASECRUDPACKAGE, baseCrudPackage);
+				map.put(DictionaryUtil.TABLECOMM, tableComm);
+				map.put(DictionaryUtil.PMAP, pmap);
+				map.put(DictionaryUtil.CMAP, cmap);
+				map.put(DictionaryUtil.COLUMNID, columnId);
+				map.put(DictionaryUtil.DEMOMAPPERTPL1, demoMapperTpl1);
+				
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+		} finally {
+			try {
+				if (resultSet != null) {
+					resultSet.close();
+				}
+				if (getConnection != null) {
+					getConnection.close();
+				}
+			} catch (SQLException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+		}
+		return map;
+	}
+	
+	@Override
+	public String createXmlMapper(String tableName,String author,String entpackageType,String dmpackageType,String workspace) {
+		Map<String, Object> map = readDB(tableName);
+		String demoMapperTpl = (String)map.get("demoMapperTpl1");
+		final String suffix = ".xml";
+		String path = "";
+		String rootPath = "";
+		String tName = "";
+		String entity = "";
+		String entName = "";
+		String mapNewPath = "";
+		if (map == null || map.get("tableName") == null) {
+			return "您输入的表名不存在，生成失败。";
+		}
+		path = Thread.currentThread().getContextClassLoader().getResource("").getPath();
+		rootPath = path.replace("/target/classes", "");
+		tName = (String) map.get("tableName");
+		entity = tName.split("_")[1];
+		entName = entity.substring(0, 1).toUpperCase() + entity.substring(1);
+		BufferedReader br = null;
+		String line = null;
+		StringBuffer buf = new StringBuffer();
+		BufferedWriter bw = null;
+
+		String claName = entName + "Mapper";
+		String mapperPath = workspace+"/kckpadmin/src/main/resources/mapper";
+		if(dmpackageType.contains(".kckpservice.")){
+			mapperPath=mapperPath.replace("kckpadmin", "kckpservice");
+		}
+		else if(dmpackageType.contains(".kckpeval.")){
+			mapperPath=mapperPath.replace("kckpadmin", "kckpeval");
+		}
+		mapNewPath = mapperPath.replace("/", "\\") + "\\" + claName + suffix;
+		File file = new File(mapNewPath);
+		File parent = file.getParentFile();
+		if (!parent.exists()) {
+			parent.mkdirs();
+		}
+		if (!file.exists()) {
+			try {
+				file.createNewFile();
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+				return "生成Mapper文件失败！";
+			}
+		} else {
+			return "Mapper文件已存在！不再生成覆盖原文件。";
+		}
+
+		try {
+			InputStreamReader read = new InputStreamReader(new FileInputStream(new File(rootPath + demoMapperTpl)),
+					"UTF-8");
+			// 根据文件路径创建缓冲输入流
+			br = new BufferedReader(read);
+			String allColum = ""; 		// 所有字段
+			String insertValue = ""; 	// 添加的所有值
+			String updateSql = "";   	// 修改sql
+			List<String> list = new ArrayList<String>();
+			String selectSql = "";  	// 查询sql
+			String itemAllColum = "";   // item的字段
+			
+			Map<String, String> map2 = (Map<String, String>) map.get("pmap");
+			for (Iterator<String> i = map2.keySet().iterator(); i.hasNext();) {
+				   String colName = (String) i.next(); 	// 字段名
+				   String colType = map2.get(colName);	// 字段类型
+				   
+				   if(!"createDate".equals(colName)){
+					   if("".equals(allColum)){
+						   allColum = colName;
+					   }else{
+						   
+						   allColum += ","+colName;
+					   }
+					   if("".equals(insertValue)){
+						   insertValue += "#{"+colName+"}";
+					   }else{
+						   
+						   insertValue += ",#{"+colName+"}";
+					   }
+					   if("".equals(itemAllColum)){
+						   itemAllColum += "#{item."+colName+"}";
+					   }else{
+						   
+						   itemAllColum += ",#{item."+colName+"}";
+					   }
+				   }
+				   
+				   if(!"id".equals(colName)&&!"createDate".equals(colName)){
+					   if(colType.equals("String")){
+						   String aa = "<if test=\"${x}!=null and ${x}!=''\"> , ${x}=#{${x}}</if>\n\t\t";
+						   updateSql += aa.replace("${x}", colName);
+					   }
+					   else{
+						   String aa = "<if test=\"${x}!=null \"> , ${x}=#{${x}}</if>\n\t\t";
+						   updateSql += aa.replace("${x}", colName);
+					   }
+				   }
+				   //查询
+				   if(colType.equals("String")){
+					   String aa = "<if test=\"${x}!=null and ${x}!=''\"> AND ${x}=#{${x}}</if>\n\t\t";
+					   String bb= aa.replace("${x}", colName);
+					   list.add(bb);
+				   }
+				   else{
+					   String aa = "<if test=\"${x}!=null\"> AND ${x}=#{${x}}</if>\n\t\t";
+					   String bb= aa.replace("${x}", colName);
+					   list.add(bb);
+				   }
+			}
+			if(list!=null&&list.size()>0){
+				for (int i = list.size()-1; i >=0; i--) {
+					selectSql+=list.get(i);
+				}
+			}
+				
+			
+			
+			// 循环读取文件的每一行, 对需要修改的行进行修改, 放入缓冲对象中
+			while ((line = br.readLine()) != null) {
+				// 此处根据实际需要修改某些行的内容
+				line = line.replace(DictionaryUtil.ENTNAME, entName);
+				line = line.replace(DictionaryUtil.ENTPACKAGE1, entpackageType);
+				line = line.replace(DictionaryUtil.TNAME, (String) map.get("tableName"));
+				line = line.replace(DictionaryUtil.ALLCOLUM, allColum);
+				line = line.replace(DictionaryUtil.INSERTVALUE, insertValue);
+				line = line.replace(DictionaryUtil.ID, (String) map.get("columnId"));
+				line = line.replace(DictionaryUtil.SELECTSQL, selectSql);
+				line = line.replace(DictionaryUtil.UPDATESQL, updateSql);
+				line = line.replace(DictionaryUtil.ITEMALLCOLUM, itemAllColum);
+				line = line.replace(DictionaryUtil.DMPACKAGE1, dmpackageType);
+				line = line.replace(DictionaryUtil.AUTHOR, author);
+				line = line.replace(DictionaryUtil.DATETIME, DateUtil.toString(new Date(), "yyyy年MM月dd日 HH:mm:ss"));
+				line = line.replace(DictionaryUtil.IMPORTURL, entpackageType + "." + entName);
+				line = line.replace(DictionaryUtil.CLASSNAME, claName);
+				line = line.replace(DictionaryUtil.ENTNAME, entName);
+				line = line.replace(DictionaryUtil.ENTITY, entity);
+				buf.append(line).append("\r\n");
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+			return "生成Mapper文件失败！";
+		} finally {
+			// 关闭流
+			if (br != null) {
+				try {
+					br.close();
+				} catch (IOException e) {
+					br = null;
+				}
+			}
+		}
+		try {
+			OutputStreamWriter write = new OutputStreamWriter(new FileOutputStream(file), "UTF-8");
+			// 根据文件路径创建缓冲输出流
+			bw = new BufferedWriter(write);
+			// 将内容写入文件中
+			bw.write(buf.toString());
+		} catch (Exception e) {
+			e.printStackTrace();
+			return "生成Mapper文件失败！";
+		} finally {
+			// 关闭流
+			if (bw != null) {
+				try {
+					bw.close();
+				} catch (IOException e) {
+					bw = null;
+				}
+			}
+		}
+		return "生成Mapper文件成功！";
+	}
+	
+	@Override
+	public String createEntity(String tableName,String author,String entpackageType,String workspace) {
+		final String javaPath=workspace+"/kckpcomm/src/main/java/"+entpackageType.replace(".", "/");
+		final String demoTpl = DictionaryUtil.DOMETPL;
+		String rootPath = "";
+		String entNewPath = "";
+		String entName = "";
+		String entity = "";
+		String suffix = ".java";
+		Map<String, Object> map = readDB(tableName);
+
+		String path = Thread.currentThread().getContextClassLoader().getResource("").getPath();
+		rootPath = path.replace("/target/classes", "");
+		entity = tableName.split("_")[1];
+		entName = entity.substring(0, 1).toUpperCase() + entity.substring(1)+"Entity";
+
+		BufferedReader br = null;
+		String line = null;
+		StringBuffer buf = new StringBuffer();
+		BufferedWriter bw = null;
+
+		entNewPath = javaPath.replace("/", "\\") + "\\" + entName + suffix;
+		File file = new File(entNewPath);
+		File parent = file.getParentFile();
+		if (!parent.exists()) {
+			parent.mkdirs();
+		}
+		if (!file.exists()) {
+			try {
+				file.createNewFile();
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+				return "生成Entity文件失败！";
+			}
+		} else {
+			return "Entity文件已存在！不再生成覆盖原文件。";
+		}
+
+		try {
+			InputStreamReader read = new InputStreamReader(new FileInputStream(new File(rootPath + demoTpl)), "UTF-8");
+			// 根据文件路径创建缓冲输入流
+			br = new BufferedReader(read);
+
+			// 循环读取文件的每一行, 对需要修改的行进行修改, 放入缓冲对象中
+			while ((line = br.readLine()) != null) {
+				// 此处根据实际需要修改某些行的内容
+				line = line.replace(DictionaryUtil.PACKAGEURL, entpackageType);
+				line = line.replace(DictionaryUtil.TABLECOMMENT, (String) map.get("tableComm"));
+				line = line.replace(DictionaryUtil.AUTHOR, author);
+				line = line.replace(DictionaryUtil.DATETIME, DateUtil.toString(new Date(), "yyyy年MM月dd日 HH:mm:ss"));
+				line = line.replace(DictionaryUtil.TNAME, tableName);
+				line = line.replace(DictionaryUtil.ENTNAME, entName);
+				line = line.replace(DictionaryUtil.BASECRUD1, (String) map.get("baseCrud"));
+				line = line.replace(DictionaryUtil.BASECRUDPACKAGE1, (String) map.get("baseCrudPackage"));
+				line = line.replace(DictionaryUtil.ENTPACKAGE1, entpackageType);
+				if (line.indexOf("//属性") >= 0) {   		
+					buf.append(line).append("\r\n");
+					List<String> plist = (List<String>) map.get("plist");
+					for (String s : plist) {
+						buf.append("\t" + s + "\r\n");
+					}
+
+				} else if (line.indexOf("//方法") >= 0) {
+					buf.append(line).append("\r\n");     
+					LinkedHashMap<String, String> pmap = (LinkedHashMap<String, String>) map.get("pmap");
+					for (String key : pmap.keySet()) {
+						String value = pmap.get(key);
+						String newkey = key.substring(0, 1).toUpperCase() + key.substring(1);
+						buf.append("\tpublic " + value + " get" + newkey + "() {\r\n");
+						buf.append("\t\treturn " + key + ";\r\n");
+						buf.append("\t}\r\n");
+						buf.append("\r\n");
+						buf.append("\tpublic void set" + newkey + "(" + value + " " + key + ") {\r\n");
+						buf.append("\t\tthis." + key + " = " + key + ";\r\n");
+						buf.append("\t}\r\n");
+						buf.append("\r\n");
+					}
+				}
+				// 如果不用修改, 则按原来的内容回写
+				else {
+					buf.append(line).append("\r\n");
+				}
+
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+			return "生成Entity文件失败！";
+		} finally {
+			// 关闭流
+			if (br != null) {
+				try {
+					br.close();
+				} catch (IOException e) {
+					br = null;
+				}
+			}
+		}
+		try {
+			OutputStreamWriter write = new OutputStreamWriter(new FileOutputStream(file), "UTF-8");
+			// 根据文件路径创建缓冲输出流
+			bw = new BufferedWriter(write);
+			// 将内容写入文件中
+			bw.write(buf.toString());
+		} catch (Exception e) {
+			e.printStackTrace();
+			return "生成Entity文件失败！";
+		} finally {
+			// 关闭流
+			if (bw != null) {
+				try {
+					bw.close();
+				} catch (IOException e) {
+					bw = null;
+				}
+			}
+		}
+		return "生成Entity文件成功！";
+
+	}
+	@Override
+	public String createDomain(String tableName,String author,String dmpackageType,String entpackageType,String workspace) {
+		String javaPath=workspace+"/kckpadmin/src/main/java/"+dmpackageType.replace(".", "/");
+		if(dmpackageType.contains(".kckpservice.")){
+			javaPath=javaPath.replace("kckpadmin", "kckpservice");
+		}else if(dmpackageType.contains(".kckpeval.")){
+			javaPath=javaPath.replace("kckpadmin", "kckpeval");
+		}
+		final String demoTpl = "/src/main/resources/public/template/entity/model/domain.tpl";
+		String rootPath = "";
+		String entNewPath = "";
+		String entName = "";
+		String entity = "";
+		String suffix = ".java";
+		Map<String, Object> map = readDB(tableName);
+		
+		String path = Thread.currentThread().getContextClassLoader().getResource("").getPath();
+		rootPath = path.replace("/target/classes", "");
+//		tName = (String) map.get("tableName");
+		entity = tableName.split("_")[1];
+		entName = entity.substring(0, 1).toUpperCase() + entity.substring(1);
+		
+		BufferedReader br = null;
+		String line = null;
+		StringBuffer buf = new StringBuffer();
+		BufferedWriter bw = null;
+		
+		entNewPath =javaPath.replace("/", "\\") + "\\" + entName + suffix;
+		File file = new File(entNewPath);
+		File parent = file.getParentFile();
+		if (!parent.exists()) {
+			parent.mkdirs();
+		}
+		if (!file.exists()) {
+			try {
+				file.createNewFile();
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+				return "生成Entity文件失败！";
+			}
+		} else {
+			return "Entity文件已存在！不再生成覆盖原文件。";
+		}
+		
+		try {
+			InputStreamReader read = new InputStreamReader(new FileInputStream(new File(rootPath + demoTpl)), "UTF-8");
+			// 根据文件路径创建缓冲输入流
+			br = new BufferedReader(read);
+			
+			// 循环读取文件的每一行, 对需要修改的行进行修改, 放入缓冲对象中
+			while ((line = br.readLine()) != null) {
+				// 此处根据实际需要修改某些行的内容
+				line = line.replace(DictionaryUtil.PACKAGEURL, dmpackageType);
+				line = line.replace("${entpackageType}", entpackageType);
+				line = line.replace(DictionaryUtil.TABLECOMMENT, (String) map.get("tableComm"));
+				line = line.replace(DictionaryUtil.AUTHOR, author);
+				line = line.replace(DictionaryUtil.DATETIME, DateUtil.toString(new Date(), "yyyy年MM月dd日 HH:mm:ss"));
+				line = line.replace(DictionaryUtil.TNAME, tableName);
+				line = line.replace(DictionaryUtil.ENTNAME, entName);
+				line = line.replace(DictionaryUtil.BASECRUD1, (String) map.get("baseCrud"));
+				line = line.replace(DictionaryUtil.BASECRUDPACKAGE1, (String) map.get("baseCrudPackage"));
+				line = line.replace(DictionaryUtil.DMPACKAGE1, dmpackageType);
+				
+				
+				buf.append(line).append("\r\n");
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+			return "生成Entity文件失败！";
+		} finally {
+			// 关闭流
+			if (br != null) {
+				try {
+					br.close();
+				} catch (IOException e) {
+					br = null;
+				}
+			}
+		}
+		try {
+			OutputStreamWriter write = new OutputStreamWriter(new FileOutputStream(file), "UTF-8");
+			// 根据文件路径创建缓冲输出流
+			bw = new BufferedWriter(write);
+			// 将内容写入文件中
+			bw.write(buf.toString());
+		} catch (Exception e) {
+			e.printStackTrace();
+			return "生成Entity文件失败！";
+		} finally {
+			// 关闭流
+			if (bw != null) {
+				try {
+					bw.close();
+				} catch (IOException e) {
+					bw = null;
+				}
+			}
+		}
+		return "生成Entity文件成功！";
+		
+	}
+	@Override
+	public String createService(String tarPath,String tableName,String author) {
+		final String demoServiceImplTpl = DictionaryUtil.DEMOCONTROLLERTPL;
+		final String idemoServiceTpl = DictionaryUtil.IDEMOSERVICETPL;
+		String rootPath = "";
+		String serNewPath = "";
+		String entName = "";
+		String entity = "";
+		String iseNewPath = "";
+		String suffix = ".java";
+		Map<String, Object> map = readDB(tableName);
+
+		String path = Thread.currentThread().getContextClassLoader().getResource("").getPath();
+		rootPath = path.replace("/target/classes", "");
+//		tName = (String) map.get("tableName");
+		entity = tableName.split("_")[1];
+		entName = entity.substring(0, 1).toUpperCase() + entity.substring(1);
+		BufferedReader br = null;
+		String line = null;
+		BufferedReader ibr = null;
+		String iline = null;
+		StringBuffer buf = new StringBuffer();
+		StringBuffer ibuf = new StringBuffer();
+		BufferedWriter bw = null;
+		BufferedWriter ibw = null;
+
+		String claName = entName + "ServiceImpl";
+		String iclaName = "I" + entName + "Service";
+		String serPath = tarPath.replace("domain.entity", "service") + ".impl";
+		String servicePath = rootPath + "src/main/java/" + serPath.replace(".", "/");
+		String msg = "";
+
+		// System.out.println(servicePath);
+		serNewPath = servicePath.replace("/", "\\") + "\\" + claName + suffix;
+		File file = new File(serNewPath);
+		File parent = file.getParentFile();
+		if (!parent.exists()) {
+			parent.mkdirs();
+		}
+		if (!file.exists()) {
+			try {
+				file.createNewFile();
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+				return "生成Service文件失败！";
+			}
+		} else {
+			msg += "ServiceImpl文件已存在！不再生成覆盖原文件。";
+		}
+		iseNewPath = servicePath.replace("/impl", "").replace("/", "\\") + "\\" + iclaName + suffix;
+		File ifile = new File(iseNewPath);
+		if (!ifile.exists()) {
+			try {
+				ifile.createNewFile();
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+				return "生成Service文件失败！";
+			}
+		} else {
+			msg += "IService文件已存在！不再生成覆盖原文件。";
+		}
+
+		try {
+			InputStreamReader read = new InputStreamReader(new FileInputStream(new File(rootPath + demoServiceImplTpl)),
+					"UTF-8");
+			// 根据文件路径创建缓冲输入流
+			br = new BufferedReader(read);
+			Map<?, ?> pmap = (Map<?, ?>) map.get("pmap");
+			// 循环读取文件的每一行, 对需要修改的行进行修改, 放入缓冲对象中
+			while ((line = br.readLine()) != null) {
+				// 此处根据实际需要修改某些行的内容
+				line = line.replace(DictionaryUtil.PACKAGEURL, serPath);
+				line = line.replace(DictionaryUtil.ENTITYURL, tarPath + "." + entName);
+				line = line.replace(DictionaryUtil.MAPPERURL,
+						tarPath.substring(0, tarPath.indexOf(".entity.")) + "." + entName + "Mapper");
+				line = line.replace(DictionaryUtil.SERVICEURL, serPath.replace(".impl", "") + "." + iclaName);
+				line = line.replace(DictionaryUtil.TABLECOMMENT, (String) map.get("tableComm"));
+				line = line.replace(DictionaryUtil.AUTHOR, author);
+				line = line.replace(DictionaryUtil.DATETIME, DateUtil.toString(new Date(), "yyyy年MM月dd日 HH:mm:ss"));
+				line = line.replace(DictionaryUtil.ENTNAME, entName);
+				line = line.replace(DictionaryUtil.IDTYPE, (String) pmap.get("id"));
+				line = line.replace(DictionaryUtil.ENTITY, entity);
+				buf.append(line).append("\r\n");
+			}
+			InputStreamReader iread = new InputStreamReader(new FileInputStream(new File(rootPath + idemoServiceTpl)),
+					"UTF-8");
+			ibr = new BufferedReader(iread);
+			while ((iline = ibr.readLine()) != null) {
+				// 此处根据实际需要修改某些行的内容
+				iline = iline.replace(DictionaryUtil.PACKAGEURL, serPath.replace(".impl", ""));
+				iline = iline.replace(DictionaryUtil.ENTITYURL, tarPath + "." + entName);
+				iline = iline.replace(DictionaryUtil.TABLECOMMENT, (String) map.get("tableComm"));
+				iline = iline.replace(DictionaryUtil.AUTHOR, author);
+				iline = iline.replace(DictionaryUtil.DATETIME, DateUtil.toString(new Date(), "yyyy年MM月dd日 HH:mm:ss"));
+				iline = iline.replace(DictionaryUtil.ENTNAME, entName);
+				iline = iline.replace(DictionaryUtil.IDTYPE, (String) pmap.get("id"));
+				iline = iline.replace(DictionaryUtil.ENTITY, entity);
+				ibuf.append(iline).append("\r\n");
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+			return "生成Service文件失败！";
+		} finally {
+			// 关闭流
+			try {
+				if (br != null) {
+					br.close();
+				}
+				if (ibr != null) {
+					ibr.close();
+				}
+			} catch (IOException e) {
+				br = null;
+				ibr = null;
+			}
+		}
+		try {
+			OutputStreamWriter write = new OutputStreamWriter(new FileOutputStream(file), "UTF-8");
+			// 根据文件路径创建缓冲输出流
+			bw = new BufferedWriter(write);
+			// 将内容写入文件中
+			bw.write(buf.toString());
+			msg += "生成ServiceImpl文件成功！";
+			OutputStreamWriter iwrite = new OutputStreamWriter(new FileOutputStream(ifile), "UTF-8");
+			ibw = new BufferedWriter(iwrite);
+			ibw.write(ibuf.toString());
+			msg += "生成IService文件成功！";
+		} catch (Exception e) {
+			e.printStackTrace();
+			return "生成Service文件失败！";
+		} finally {
+			// 关闭流
+			try {
+				if (bw != null) {
+					bw.close();
+				}
+				if (ibw != null) {
+					ibw.close();
+				}
+			} catch (IOException e) {
+				bw = null;
+				ibw = null;
+			}
+		}
+		return msg;
+
+	}
+	
+	
+	
+}

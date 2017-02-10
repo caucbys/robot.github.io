@@ -1,0 +1,10 @@
+Manifest-Version: 1.0
+Implementation-Title: coderobot
+Implementation-Version: 0.0.1-SNAPSHOT
+Built-By: ssy
+Implementation-Vendor-Id: com.gdyunst
+Build-Jdk: 1.8.0_25
+Implementation-URL: http://projects.spring.io/spring-boot/coderobot/
+Created-By: Maven Integration for Eclipse
+Implementation-Vendor: Pivotal Software, Inc.
+

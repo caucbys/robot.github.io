@@ -1,0 +1,24 @@
+package ${packageUrl};
+
+import java.util.List;
+
+import ${entpackageType}.${entName}Entity;
+
+/**
+ * 功能描述:${tableComment}实体类
+ * 
+ * @author ${author}
+ * @date ${datetime}
+ */
+public class ${entName} extends ${entName}Entity{
+
+	private List<String> ids;
+
+	public List<String> getIds() {
+		return ids;
+	}
+
+	public void setIds(List<String> ids) {
+		this.ids = ids;
+	}
+}
